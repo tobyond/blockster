@@ -2,6 +2,9 @@
 
 module Blockster
   class Wrapper
+    extend Forwardable
+    def_delegators :to_h, :each_pair, :each, :empty?, :keys
+
     def initialize(klass = nil)
       @klass = klass || Blockster.default_class
       raise ArgumentError, "No class provided and no default_class configured" unless @klass
@@ -19,37 +22,90 @@ module Blockster
 
       @instance = temp_class.new
       set_nested_attributes(symbolize_keys(attributes))
-      @instance
+      self
+    end
+
+    def to_h
+      return {} unless @instance
+
+      collected_attributes = {}
+
+      # Get defined attributes
+      if @instance.class.respond_to?(:attribute_types)
+        @instance.class.attribute_types.keys.each do |attr_name|
+          value = @instance.public_send(attr_name)
+          collected_attributes[attr_name.to_sym] = convert_value_to_hash(value)
+        end
+      end
+
+      # Get nested attributes
+      if @instance.class.respond_to?(:nested_attributes)
+        @instance.class.nested_attributes.each_key do |attr_name|
+          nested_value = instance_variable_get("@#{attr_name}")
+          collected_attributes[attr_name.to_sym] = nested_value&.to_h || {}
+        end
+      end
+
+      collected_attributes
+    end
+
+    def inspect
+      to_h.inspect
+    end
+
+    def to_hash
+      to_h
+    end
+
+    def as_json(options = nil)
+      to_h
+    end
+
+    def to_json(options = nil)
+      as_json(options).to_json
     end
 
     private
 
+    def convert_value_to_hash(value)
+      case value
+      when Wrapper
+        value.to_h
+      when Array
+        value.map { |v| convert_value_to_hash(v) }
+      else
+        value
+      end
+    end
+
     def set_nested_attributes(attributes)
       return unless attributes.is_a?(Hash)
 
-      @instance.class.nested_attributes.each do |name, config|
-        next unless attributes.key?(name)
-
-        # Use the default class for nested attributes
-        klass = Class.new(@klass)
-
-        nested_wrapper = Wrapper.new(klass)
-        nested_instance = nested_wrapper.with({}, &config)
-
-        if attributes[name].is_a?(Hash)
-          attributes[name].each do |key, value|
-            setter = "#{key}="
-            nested_instance.send(setter, value) if nested_instance.respond_to?(setter)
-          end
+      @instance.class.nested_attributes&.each do |name, config|
+        # Define accessor method for nested attribute on the wrapper
+        define_singleton_method(name) do
+          instance_variable_get("@#{name}")
         end
 
-        @instance.instance_variable_set("@#{name}", nested_instance)
-        @instance.define_singleton_method(name) { instance_variable_get("@#{name}") }
+        if attributes.key?(name)
+          klass = Class.new(@klass)
+
+          nested_wrapper = self.class.new(klass)
+          nested_wrapper.with(attributes[name], &config)
+
+          instance_variable_set("@#{name}", nested_wrapper)
+        else
+          # Initialize empty wrapper even if no attributes provided
+          klass = Class.new(@klass)
+          nested_wrapper = self.class.new(klass)
+          nested_wrapper.with({}, &config)
+          instance_variable_set("@#{name}", nested_wrapper)
+        end
       end
 
+      # Set regular attributes
       attributes.each do |key, value|
-        next if @instance.class.nested_attributes.key?(key)
-
+        next if @instance.class.nested_attributes&.key?(key)
         setter = "#{key}="
         @instance.send(setter, value) if @instance.respond_to?(setter)
       end
@@ -57,62 +113,24 @@ module Blockster
 
     def symbolize_keys(hash)
       return {} unless hash.is_a?(Hash)
-
-      hash.transform_keys do |key|
-        key.to_sym
-      rescue StandardError
-        key
-      end
+      hash.transform_keys { |key| key.to_sym rescue key }
     end
 
     def method_missing(method_name, *args, &block)
-      if @instance.respond_to?(method_name)
-        @instance.send(method_name, *args, &block)
-      else
-        super
-      end
-    end
-
-    def respond_to_missing?(method_name, include_private = false)
-      @instance.respond_to?(method_name, include_private) || super
-    end
-  end
-
-  class Context
-    def initialize(temp_class, wrapper)
-      @temp_class = temp_class
-      @wrapper = wrapper
-      @temp_class.class_eval do
-        class << self
-          attr_accessor :nested_attributes
+      if @instance&.respond_to?(method_name)
+        result = @instance.send(method_name, *args, &block)
+        if result == @instance
+          self
+        else
+          result
         end
-        @nested_attributes = {}
-      end
-    end
-
-    def root(key, &block)
-      @wrapper.instance_variable_set("@root_key", key)
-      instance_eval(&block)
-    end
-
-    def attribute(name, type, **_options)
-      @temp_class.attribute(name, type)
-    end
-
-    def nested(name, &block)
-      @temp_class.nested_attributes[name] = block
-    end
-
-    def method_missing(method_name, *args, &block)
-      if @temp_class.respond_to?(method_name, true)
-        @temp_class.send(method_name, *args, &block)
       else
         super
       end
     end
 
     def respond_to_missing?(method_name, include_private = false)
-      @temp_class.respond_to?(method_name, include_private) || super
+      @instance&.respond_to?(method_name, include_private) || super
     end
   end
 end
