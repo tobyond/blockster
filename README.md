@@ -1,35 +1,137 @@
 # Blockster
 
-TODO: Delete this and the text below, and describe your gem
-
-Welcome to your new gem! In this directory, you'll find the files you need to be able to package up your Ruby library into a gem. Put your Ruby code in the file `lib/blockster`. To experiment with that code, run `bin/console` for an interactive prompt.
+Blockster is a flexible Ruby gem that provides a clean DSL for defining and initializing objects with nested attributes. It's particularly useful when working with params from complex form objects, API wrappers, or any scenario where you need to dynamically define object attributes.
 
 ## Installation
 
-TODO: Replace `UPDATE_WITH_YOUR_GEM_NAME_IMMEDIATELY_AFTER_RELEASE_TO_RUBYGEMS_ORG` with your gem name right after releasing it to RubyGems.org. Please do not do it earlier due to security reasons. Alternatively, replace this section with instructions to install your gem from git if you don't plan to release to RubyGems.org.
+Add this line to your application's Gemfile:
 
-Install the gem and add to the application's Gemfile by executing:
+```ruby
+gem 'blockster'
+```
 
-    $ bundle add UPDATE_WITH_YOUR_GEM_NAME_IMMEDIATELY_AFTER_RELEASE_TO_RUBYGEMS_ORG
+And then execute:
 
-If bundler is not being used to manage dependencies, install the gem by executing:
+```bash
+$ bundle install
+```
 
-    $ gem install UPDATE_WITH_YOUR_GEM_NAME_IMMEDIATELY_AFTER_RELEASE_TO_RUBYGEMS_ORG
+Or install it yourself as:
+
+```bash
+$ gem install blockster
+```
 
 ## Usage
 
-TODO: Write usage instructions here
+### Basic Usage
+
+```ruby
+class UserForm
+  include ActiveModel::Model
+  include ActiveModel::Attributes
+end
+
+wrapper = Blockster::Wrapper.new(UserForm)
+user = wrapper.with(username: 'js_bach', email: 'js@bach.music') do
+  attribute :username, :string
+  attribute :email, :string
+end
+
+user.username # => 'js_bach'
+user.email    # => 'js@bach.music'
+```
+
+### Root Node and Nested Attributes
+
+```ruby
+params = {
+  'user' => {
+    'username' => 'js_bach',
+    'email' => {
+      'address' => 'js@bach.music',
+      'notifications' => true
+    },
+    'preferences' => {
+      'theme' => 'dark',
+      'language' => 'en'
+    }
+  }
+}
+
+user = wrapper.with(params) do
+  root :user do
+    attribute :username, :string
+    
+    nested :email do
+      attribute :address, :string
+      attribute :notifications, :boolean
+    end
+    
+    nested :preferences do
+      attribute :theme, :string
+      attribute :language, :string
+    end
+  end
+end
+
+user.username                 # => 'js_bach'
+user.email.address           # => 'js@bach.music'
+user.preferences.theme       # => 'dark'
+```
+
+### Configuration
+
+You can configure a default class to be used when initializing wrappers, if you are using rails, this would be a great way to configure, since the attributes api is part of rails:
+
+```ruby
+# config/initializers/blockster.rb (in Rails)
+Blockster.configure do |config|
+  config.default_class = Class.new do
+    include ActiveModel::Model
+    include ActiveModel::Attributes
+  end
+end
+
+# Now you can initialize wrappers without providing a class
+wrapper = Blockster::Wrapper.new
+```
+
+Or use an existing class:
+
+```ruby
+class DefaultFormObject
+  include ActiveModel::Model
+  include ActiveModel::Attributes
+  
+  # Your default setup here
+end
+
+Blockster.configure do |config|
+  config.default_class = DefaultFormObject
+end
+```
+
+When initializing a wrapper, you can still override the default class:
+
+```ruby
+# Uses default class
+wrapper = Blockster::Wrapper.new
+
+# Overrides default class
+wrapper = Blockster::Wrapper.new(CustomClass)
+```
+
+Note: Either a class must be provided to the wrapper or a default class must be configured.
 
 ## Development
 
-After checking out the repo, run `bin/setup` to install dependencies. Then, run `rake spec` to run the tests. You can also run `bin/console` for an interactive prompt that will allow you to experiment.
-
-To install this gem onto your local machine, run `bundle exec rake install`. To release a new version, update the version number in `version.rb`, and then run `bundle exec rake release`, which will create a git tag for the version, push git commits and the created tag, and push the `.gem` file to [rubygems.org](https://rubygems.org).
+After checking out the repo, run `bin/setup` to install dependencies. Then, run `rake spec` to run the tests.
 
 ## Contributing
 
-Bug reports and pull requests are welcome on GitHub at https://github.com/[USERNAME]/blockster.
+Bug reports and pull requests are welcome on GitHub at https://github.com/yourusername/blockster.
 
 ## License
 
-The gem is available as open source under the terms of the [MIT License](https://opensource.org/licenses/MIT).
+The gem is available as open source under the terms of the MIT License.
